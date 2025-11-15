@@ -1,0 +1,86 @@
+import os
+import tempfile
+from docx import Document
+from docx.shared import Mm
+from barcode_tools import generate_barcode_png
+
+
+def replace_text(doc, old, new):
+    """
+    Простая замена текста во всех параграфах и таблицах.
+    """
+    # параграфы
+    for p in doc.paragraphs:
+        if old in p.text:
+            for r in p.runs:
+                r.text = r.text.replace(old, new)
+
+    # таблицы
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    if old in p.text:
+                        for r in p.runs:
+                            r.text = r.text.replace(old, new)
+
+
+def replace_barcode_in_first_paragraph(doc, new_png_path):
+    """
+    Заменяет первую найденную картинку в первом параграфе документа.
+    """
+    for p in doc.paragraphs:
+        for run in p.runs:
+
+            # ищем picture
+            if run.element.xpath('.//pic:pic',
+                     namespaces={'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture'}):
+
+                # удаляем старое изображение
+                run._element.getparent().remove(run._element)
+
+                # создаём новый run и вставляем картинку точно туда же
+                new_run = p.add_run()
+                new_run.add_picture(new_png_path, width=Mm(60))
+
+                return True
+
+    return False
+
+
+def process_document(template_path,
+                     out_path,
+                     code128,
+                     product,
+                     quantity,
+                     close_date,
+                     expiry):
+    """
+    Основная функция генерации документа.
+    """
+    doc = Document(template_path)
+
+    # === внутренний блок: делаем штрихкод ===
+    tmp = tempfile.gettempdir()
+    barcode_base = os.path.join(tmp, f"barcode_{code128}")
+    barcode_png = generate_barcode_png(code128, barcode_base)
+
+    # === заменяем в верхнем параграфе ===
+    success = replace_barcode_in_first_paragraph(doc, barcode_png)
+    if not success:
+        print("⚠️ Внимание: картинка штрихкода не найдена в документе.")
+
+    # === текстовые замены ===
+    replace_text(doc, "01000000049721025000186840", code128)
+    replace_text(doc, "Виски “William Lawson’s ”, 0,5 л., 40%", product)
+    replace_text(doc, "Количество коробов:\t\t65", f"Количество коробов:\t\t{quantity}")
+    replace_text(doc, "Дата закрытия паллеты:\t\t25.09.2025", f"Дата закрытия паллеты:\t\t{close_date}")
+    replace_text(doc, "Срок годности:\t\tне ограничен", f"Срок годности:\t\t{expiry}")
+
+    # === A5 ===
+    for section in doc.sections:
+        section.page_width = Mm(148)
+        section.page_height = Mm(210)
+
+    doc.save(out_path)
+    return out_path
