@@ -1,1 +1,21 @@
 
+import os
+import barcode
+from barcode.writer import ImageWriter
+
+
+def generate_barcode_png(code_value: str, output_path: str) -> str:
+    """
+    Генерирует штрихкод code128 в PNG.
+    Возвращает путь к png.
+    """
+    CODE128 = barcode.get_barcode_class('code128')
+    code_obj = CODE128(code_value, writer=ImageWriter())
+    result_path = code_obj.save(output_path)
+
+    # если вдруг библиотека сама добавила расширение
+    if not result_path.endswith(".png"):
+        if os.path.exists(result_path + ".png"):
+            return result_path + ".png"
+
+    return result_path
