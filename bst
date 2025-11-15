@@ -1,0 +1,283 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from docx import Document
+from docx.shared import Inches
+from barcode import Code128
+from barcode.writer import ImageWriter
+import os
+import tempfile
+import subprocess
+from pathlib import Path
+import shutil
+
+class PalletLabelEditor:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Генератор паллетных этикеток")
+        self.root.geometry("450x550")
+        
+        self.desktop_path = Path.home() / "Desktop"
+        self.template_path = self.create_template()
+        
+        self.create_widgets()
+    
+    def create_template(self):
+        """Создание точного шаблона как в вашем файле"""
+        template_dir = Path(__file__).parent / "templates"
+        template_dir.mkdir(exist_ok=True)
+        
+        template_path = template_dir / "pallet_template.docx"
+        
+        # Создаем точный шаблон как в вашем файле
+        doc = Document()
+        
+        # Добавляем место для штрих-кода (image1.gif)
+        doc.add_paragraph("Здесь будет штрих-код")
+        
+        # Пустая строка
+        doc.add_paragraph()
+        
+        # Номер штрих-кода жирным
+        p = doc.add_paragraph()
+        p.add_run("01000000049721025000186840").bold = True
+        
+        # Пустая строка
+        doc.add_paragraph()
+        
+        # Код и наименование продукта
+        doc.add_paragraph("Код и наименование продукта:")
+        
+        # Наименование продукта жирным
+        p = doc.add_paragraph()
+        p.add_run('Виски "William Lawson\'s ", 0,5 л., 40%').bold = True
+        
+        # Производитель
+        doc.add_paragraph("Производитель: ООО «Завод Георгиевский. Традиции качества».")
+        
+        # Количество коробов
+        doc.add_paragraph("Количество коробов: ")
+        p = doc.paragraphs[-1]
+        p.add_run("65").bold = True
+        
+        # Дата закрытия паллеты
+        doc.add_paragraph("Дата закрытия паллеты: ")
+        p = doc.paragraphs[-1]
+        p.add_run("25.09.2025").bold = True
+        
+        # Срок годности
+        doc.add_paragraph("Срок годности: ")
+        p = doc.paragraphs[-1]
+        p.add_run("не ограничен").bold = True
+        
+        doc.save(template_path)
+        return template_path
+    
+    def create_widgets(self):
+        # Заголовок
+        title_label = ttk.Label(self.root, text="Генератор паллетных этикеток", 
+                               font=("Arial", 12, "bold"))
+        title_label.pack(pady=10)
+        
+        # Поля для ввода данных
+        fields = [
+            ("Штрих-код (Code-128):", "barcode_entry", "01000000049721025000186840"),
+            ("Код и наименование продукта:", "product_entry", 'Виски "William Lawson\'s ", 0,5 л., 40%'),
+            ("Количество коробов:", "quantity_entry", "65"),
+            ("Дата закрытия паллеты:", "date_entry", "25.09.2025"),
+            ("Срок годности:", "expiry_entry", "не ограничен")
+        ]
+        
+        for label_text, attr_name, default_value in fields:
+            ttk.Label(self.root, text=label_text, font=("Arial", 9)).pack(pady=3)
+            entry = ttk.Entry(self.root, width=50, font=("Arial", 9))
+            entry.pack(pady=2)
+            entry.insert(0, default_value)
+            setattr(self, attr_name, entry)
+        
+        # Фрейм для кнопок
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(pady=20)
+        
+        # Кнопка создания
+        create_btn = ttk.Button(button_frame, text="🖨️ Создать этикетку", 
+                               command=self.create_label, width=25)
+        create_btn.pack(pady=10)
+        
+        # Информация
+        info_label = ttk.Label(self.root, 
+                              text="Шаблон создан автоматически\nФайл сохраняется на рабочий стол",
+                              font=("Arial", 8), foreground="gray", justify='center')
+        info_label.pack(pady=5)
+    
+    def generate_barcode(self, code):
+        """Генерация штрих-кода"""
+        temp_dir = tempfile.gettempdir()
+        barcode_path = os.path.join(temp_dir, f'temp_barcode_{code}')
+        
+        writer = ImageWriter()
+        writer.options = {
+            'module_width': 0.2,
+            'module_height': 15.0,
+            'quiet_zone': 4.0,
+            'font_size': 10,
+            'text_distance': 3.0
+        }
+        
+        barcode = Code128(code, writer=writer)
+        filename = barcode.save(barcode_path)
+        return filename
+    
+    def replace_text_in_document(self, doc, old_text, new_text):
+        """Замена текста в документе с сохранением форматирования"""
+        replaced = False
+        
+        # Ищем в параграфах
+        for paragraph in doc.paragraphs:
+            if old_text in paragraph.text:
+                # Сохраняем форматирование runs
+                for run in paragraph.runs:
+                    if old_text in run.text:
+                        run.text = run.text.replace(old_text, new_text)
+                        replaced = True
+                        print(f"Заменен в параграфе: '{old_text}' -> '{new_text}'")
+        
+        # Ищем в таблицах
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if old_text in cell.text:
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                if old_text in run.text:
+                                    run.text = run.text.replace(old_text, new_text)
+                                    replaced = True
+                                    print(f"Заменен в таблице: '{old_text}' -> '{new_text}'")
+        
+        return replaced
+    
+    def replace_specific_elements(self, doc):
+        """Замена конкретных элементов по их позиции в документе"""
+        try:
+            replacements = [
+                (2, 0, self.barcode_entry.get().strip()),  # Номер штрих-кода (3й параграф, 1й run)
+                (5, 0, self.product_entry.get().strip()),  # Наименование продукта (6й параграф, 1й run)
+                (7, 1, self.quantity_entry.get().strip()), # Количество коробов (8й параграф, 2й run)
+                (8, 1, self.date_entry.get().strip()),     # Дата (9й параграф, 2й run)
+                (9, 1, self.expiry_entry.get().strip())    # Срок годности (10й параграф, 2й run)
+            ]
+            
+            replaced_count = 0
+            for para_idx, run_idx, new_text in replacements:
+                if para_idx < len(doc.paragraphs):
+                    paragraph = doc.paragraphs[para_idx]
+                    if run_idx < len(paragraph.runs):
+                        paragraph.runs[run_idx].text = new_text
+                        replaced_count += 1
+                        print(f"Заменен элемент [{para_idx},{run_idx}]: '{new_text}'")
+            
+            return replaced_count
+        except Exception as e:
+            print(f"Ошибка в замене элементов: {e}")
+            return 0
+    
+    def replace_barcode_image(self, doc, new_barcode_path):
+        """Замена изображения штрих-кода"""
+        try:
+            # Находим первый параграф (где должен быть штрих-код)
+            if len(doc.paragraphs) > 0:
+                first_paragraph = doc.paragraphs[0]
+                
+                # Очищаем параграф от старого содержимого
+                for run in first_paragraph.runs:
+                    run.text = ""
+                
+                # Добавляем новый штрих-код
+                run = first_paragraph.add_run()
+                run.add_picture(new_barcode_path, width=Inches(2.0))
+                return True
+            return False
+            
+        except Exception as e:
+            print(f"Ошибка при замене изображения: {e}")
+            return False
+    
+    def create_label(self):
+        """Создание этикетки"""
+        try:
+            if not os.path.exists(self.template_path):
+                messagebox.showerror("Ошибка", "Шаблон не найден!")
+                return
+            
+            # Проверяем введенные данные
+            barcode_text = self.barcode_entry.get().strip()
+            if not barcode_text:
+                messagebox.showerror("Ошибка", "Введите штрих-код!")
+                return
+            
+            # Создаем копию шаблона
+            temp_dir = tempfile.gettempdir()
+            temp_doc_path = os.path.join(temp_dir, f"temp_pallet_{barcode_text}.docx")
+            shutil.copy2(self.template_path, temp_doc_path)
+            
+            # Открываем копию для редактирования
+            doc = Document(temp_doc_path)
+            
+            # Генерируем новый штрих-код
+            barcode_filename = self.generate_barcode(barcode_text)
+            
+            # Заменяем данные по позициям (более надежный метод)
+            replaced_count = self.replace_specific_elements(doc)
+            
+            # Дополнительная текстовая замена для надежности
+            text_replacements = {
+                "01000000049721025000186840": barcode_text,
+                'Виски "William Lawson\'s ", 0,5 л., 40%': self.product_entry.get().strip(),
+                "65": self.quantity_entry.get().strip(),
+                "25.09.2025": self.date_entry.get().strip(),
+                "не ограничен": self.expiry_entry.get().strip()
+            }
+            
+            for old_text, new_text in text_replacements.items():
+                if self.replace_text_in_document(doc, old_text, new_text):
+                    replaced_count += 1
+            
+            # Заменяем изображение штрих-кода
+            image_replaced = self.replace_barcode_image(doc, barcode_filename)
+            
+            # Сохраняем итоговый документ на рабочий стол
+            final_filename = self.desktop_path / f"Паллетная_этикетка_{barcode_text}.docx"
+            doc.save(final_filename)
+            
+            # Удаляем временные файлы
+            if os.path.exists(barcode_filename):
+                os.remove(barcode_filename)
+            if os.path.exists(temp_doc_path):
+                os.remove(temp_doc_path)
+            
+            # Открываем созданный документ
+            self.open_document(final_filename)
+            
+            messagebox.showinfo("Готово!", 
+                              f"Этикетка успешно создана!\n\n"
+                              f"Файл: {final_filename.name}\n"
+                              f"Заменено элементов: {replaced_count}\n"
+                              f"Штрих-код обновлен: {'Да' if image_replaced else 'Нет'}")
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при создании этикетки:\n{str(e)}")
+    
+    def open_document(self, file_path):
+        """Автоматическое открытие документа"""
+        try:
+            if os.path.exists(file_path):
+                if os.name == 'nt':  # Windows
+                    os.startfile(file_path)
+                elif os.name == 'posix':  # macOS, Linux
+                    subprocess.run(['open', file_path] if os.name == 'posix' and os.uname().sysname == 'Darwin' else ['xdg-open', file_path])
+        except Exception as e:
+            print(f"Ошибка при открытии файла: {e}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PalletLabelEditor(root)
+    root.mainloop()
