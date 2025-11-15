@@ -1,0 +1,78 @@
+from tkinter import *
+from tkinter import messagebox
+from datetime import datetime
+import os
+
+from doc_tools import process_document
+
+TEMPLATE_NAME = "шаблон паллетного.docx"
+
+
+def build_gui():
+    root = Tk()
+    root.title("Pallet Label Editor")
+    root.geometry("580x420")
+
+    Label(root, text="Code-128 (номер):").pack(anchor="w", padx=10)
+    code_entry = Entry(root, width=50)
+    code_entry.insert(0, "01000000049721025000186840")
+    code_entry.pack(padx=10)
+
+    Label(root, text="Код и наименование продукта:").pack(anchor="w", padx=10, pady=(10, 0))
+    product_text = Text(root, width=60, height=3)
+    product_text.insert("1.0", "Виски “William Lawson’s ”, 0,5 л., 40%")
+    product_text.pack(padx=10)
+
+    Label(root, text="Количество коробов:").pack(anchor="w", padx=10, pady=(10, 0))
+    qty_entry = Entry(root, width=30)
+    qty_entry.insert(0, "65")
+    qty_entry.pack(padx=10)
+
+    Label(root, text="Дата закрытия паллеты:").pack(anchor="w", padx=10, pady=(10, 0))
+    date_entry = Entry(root, width=30)
+    date_entry.insert(0, datetime.now().strftime("%d.%m.%Y"))
+    date_entry.pack(padx=10)
+
+    Label(root, text="Срок годности:").pack(anchor="w", padx=10, pady=(10, 0))
+    expiry_entry = Entry(root, width=40)
+    expiry_entry.insert(0, "не ограничен")
+    expiry_entry.pack(padx=10)
+
+    status = Label(root, text="", fg="green")
+    status.pack(pady=5)
+
+    def save_doc():
+        code128 = code_entry.get().strip()
+        product = product_text.get("1.0", END).strip()
+        qty = qty_entry.get().strip()
+        d = date_entry.get().strip()
+        exp = expiry_entry.get().strip()
+
+        if not os.path.exists(TEMPLATE_NAME):
+            messagebox.showerror("Ошибка", f"Файл {TEMPLATE_NAME} не найден.")
+            return
+
+        out_name = f"паллетный_{code128}.docx"
+        out_path = os.path.join(os.getcwd(), out_name)
+
+        try:
+            process_document(
+                TEMPLATE_NAME,
+                out_path,
+                code128,
+                product,
+                qty,
+                d,
+                exp
+            )
+            status.config(text=f"Сохранено: {out_name}")
+            messagebox.showinfo("Готово", f"Документ сохранён:\n{out_name}")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось создать файл:\n{e}")
+
+    Button(root,
+           text="Сохранить документ",
+           width=40,
+           command=save_doc).pack(pady=10)
+
+    root.mainloop()
