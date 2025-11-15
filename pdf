@@ -1,0 +1,266 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from docx import Document
+from docx.shared import Mm, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from barcode import Code128
+from barcode.writer import ImageWriter
+import os
+import tempfile
+import subprocess
+from pathlib import Path
+
+class PalletLabelEditor:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Генератор паллетных этикеток")
+        self.root.geometry("400x500")
+        
+        self.template_path = ""
+        self.desktop_path = Path.home() / "Desktop"
+        
+        self.create_widgets()
+    
+    def create_widgets(self):
+        # Поля для ввода данных
+        ttk.Label(self.root, text="Штрих-код (Code-128):", font=("Arial", 10)).pack(pady=8)
+        self.barcode_entry = ttk.Entry(self.root, width=40, font=("Arial", 10))
+        self.barcode_entry.pack(pady=5)
+        self.barcode_entry.insert(0, "01000000049721025000186840")
+        
+        ttk.Label(self.root, text="Код и наименование продукта:", font=("Arial", 10)).pack(pady=8)
+        self.product_entry = ttk.Entry(self.root, width=40, font=("Arial", 10))
+        self.product_entry.pack(pady=5)
+        self.product_entry.insert(0, 'Виски "William Lawson\'s ", 0,5 л., 40%')
+        
+        ttk.Label(self.root, text="Количество коробов:", font=("Arial", 10)).pack(pady=8)
+        self.quantity_entry = ttk.Entry(self.root, width=40, font=("Arial", 10))
+        self.quantity_entry.pack(pady=5)
+        self.quantity_entry.insert(0, "65")
+        
+        ttk.Label(self.root, text="Дата закрытия паллеты:", font=("Arial", 10)).pack(pady=8)
+        self.date_entry = ttk.Entry(self.root, width=40, font=("Arial", 10))
+        self.date_entry.pack(pady=5)
+        self.date_entry.insert(0, "25.09.2025")
+        
+        ttk.Label(self.root, text="Срок годности:", font=("Arial", 10)).pack(pady=8)
+        self.expiry_entry = ttk.Entry(self.root, width=40, font=("Arial", 10))
+        self.expiry_entry.pack(pady=5)
+        self.expiry_entry.insert(0, "не ограничен")
+        
+        # Фрейм для кнопок
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(pady=20)
+        
+        # Кнопки
+        ttk.Button(button_frame, text="📁 Выбрать PDF шаблон", 
+                  command=self.select_pdf_template, width=30).pack(pady=8)
+        
+        ttk.Button(button_frame, text="🖨️ Создать и сохранить PDF", 
+                  command=self.create_and_save_pdf, width=30).pack(pady=8)
+    
+    def select_pdf_template(self):
+        """Выбор PDF файла шаблона"""
+        filename = filedialog.askopenfilename(
+            title="Выберите PDF файл шаблона",
+            filetypes=[
+                ("PDF files", "*.pdf"),
+                ("All files", "*.*")
+            ]
+        )
+        if filename:
+            self.template_path = filename
+            messagebox.showinfo("PDF шаблон выбран", 
+                              f"PDF шаблон установлен:\n{os.path.basename(filename)}")
+    
+    def generate_barcode(self, code):
+        """Генерация штрих-кода с правильными настройками"""
+        temp_dir = tempfile.gettempdir()
+        barcode_path = os.path.join(temp_dir, 'temp_barcode')
+        
+        writer = ImageWriter()
+        writer.options = {
+            'module_width': 0.15,
+            'module_height': 12.0,
+            'quiet_zone': 3.0,
+            'font_size': 8,
+            'text_distance': 2.0
+        }
+        
+        barcode = Code128(code, writer=writer)
+        filename = barcode.save(barcode_path)
+        return filename
+    
+    def convert_docx_to_pdf(self, docx_path, pdf_path):
+        """Конвертация DOCX в PDF"""
+        try:
+            # Используем LibreOffice для конвертации
+            if os.name == 'nt':  # Windows
+                libreoffice_path = "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+                if not os.path.exists(libreoffice_path):
+                    libreoffice_path = "soffice"  # Попробуем найти в PATH
+            else:  # Linux/Mac
+                libreoffice_path = "libreoffice"
+            
+            cmd = [
+                libreoffice_path,
+                '--headless',
+                '--convert-to', 'pdf',
+                '--outdir', str(Path(pdf_path).parent),
+                docx_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                # LibreOffice сохраняет с тем же именем но .pdf
+                expected_pdf = Path(docx_path).with_suffix('.pdf')
+                if expected_pdf.exists():
+                    # Перемещаем в нужное место с нужным именем
+                    if expected_pdf != Path(pdf_path):
+                        expected_pdf.rename(pdf_path)
+                    return True
+            return False
+            
+        except Exception as e:
+            print(f"Ошибка конвертации: {e}")
+            return False
+    
+    def create_and_save_pdf(self):
+        """Создание и сохранение документа в формате PDF"""
+        try:
+            doc = Document()
+            
+            # Устанавливаем формат A5 в АЛЬБОМНОЙ ориентации
+            section = doc.sections[0]
+            section.page_height = Mm(148)   # A5 ширина -> теперь высота
+            section.page_width = Mm(210)    # A5 высота -> теперь ширина
+            section.top_margin = Mm(10)
+            section.bottom_margin = Mm(10)
+            section.left_margin = Mm(10)
+            section.right_margin = Mm(10)
+            
+            # Генерируем штрих-код
+            barcode_filename = self.generate_barcode(self.barcode_entry.get())
+            
+            # Добавляем штрих-код
+            doc.add_picture(barcode_filename, width=Mm(180))
+            
+            # Пустая строка
+            doc.add_paragraph()
+            
+            # Номер штрих-кода (по центру, жирный)
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(self.barcode_entry.get())
+            run.bold = True
+            run.font.size = Pt(11)
+            run.font.name = 'Arial'
+            
+            # Пустая строка
+            doc.add_paragraph()
+            
+            # Код и наименование продукта
+            p = doc.add_paragraph()
+            run = p.add_run("Код и наименование продукта:")
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            p = doc.add_paragraph()
+            run = p.add_run(self.product_entry.get())
+            run.bold = True
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            # Производитель
+            p = doc.add_paragraph()
+            run = p.add_run("Производитель: ООО «Завод Георгиевский. Традиции качества».")
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            # Количество коробов
+            p = doc.add_paragraph()
+            run = p.add_run("Количество коробов:")
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            p = doc.add_paragraph()
+            run = p.add_run(self.quantity_entry.get())
+            run.bold = True
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            # Дата закрытия паллеты
+            p = doc.add_paragraph()
+            run = p.add_run("Дата закрытия паллеты:")
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            p = doc.add_paragraph()
+            run = p.add_run(self.date_entry.get())
+            run.bold = True
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            # Срок годности
+            p = doc.add_paragraph()
+            run = p.add_run("Срок годности:")
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            p = doc.add_paragraph()
+            run = p.add_run(self.expiry_entry.get())
+            run.bold = True
+            run.font.size = Pt(10)
+            run.font.name = 'Arial'
+            
+            # Создаем временный DOCX файл
+            temp_dir = tempfile.gettempdir()
+            temp_docx = os.path.join(temp_dir, f"temp_{self.barcode_entry.get()}.docx")
+            doc.save(temp_docx)
+            
+            # Сохраняем итоговый PDF на рабочий стол
+            pdf_filename = self.desktop_path / f"{self.barcode_entry.get()}.pdf"
+            
+            # Конвертируем в PDF
+            if self.convert_docx_to_pdf(temp_docx, str(pdf_filename)):
+                # Удаляем временные файлы
+                if os.path.exists(barcode_filename):
+                    os.remove(barcode_filename)
+                if os.path.exists(temp_docx):
+                    os.remove(temp_docx)
+                
+                self.current_file = str(pdf_filename)
+                
+                # Автоматически открываем PDF
+                self.open_document()
+                
+                messagebox.showinfo("Готово!", 
+                                  f"PDF документ создан и сохранен на рабочий стол!\n\n"
+                                  f"Имя файла: {self.barcode_entry.get()}.pdf\n"
+                                  f"Формат: A5 (альбомный)\n"
+                                  f"Расположение: Рабочий стол")
+            else:
+                messagebox.showwarning("Внимание", 
+                                     "Не удалось создать PDF файл.\n"
+                                     "Установите LibreOffice для конвертации в PDF.\n\n"
+                                     "Временный DOCX файл сохранен:\n" + temp_docx)
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при создании PDF: {str(e)}")
+    
+    def open_document(self):
+        """Автоматическое открытие PDF"""
+        try:
+            if hasattr(self, 'current_file') and os.path.exists(self.current_file):
+                if os.name == 'nt':  # Windows
+                    os.startfile(self.current_file)
+                elif os.name == 'posix':  # macOS, Linux
+                    subprocess.run(['open', self.current_file] if os.name == 'posix' and os.uname().sysname == 'Darwin' else ['xdg-open', self.current_file])
+        except Exception as e:
+            print(f"Ошибка при открытии файла: {e}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PalletLabelEditor(root)
+    root.mainloop()
