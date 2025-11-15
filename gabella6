@@ -1,0 +1,283 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from docx import Document
+from barcode import Code128
+from barcode.writer import ImageWriter
+import os
+import tempfile
+import subprocess
+import shutil
+
+class PalletLabelEditor:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Редактор паллетных этикеток")
+        self.root.geometry("400x550")
+        
+        self.template_path = "шаблон паллетного.docx"
+        
+        self.create_widgets()
+    
+    def create_widgets(self):
+        # Поля для ввода данных
+        ttk.Label(self.root, text="Штрих-код (Code-128):").pack(pady=5)
+        self.barcode_entry = ttk.Entry(self.root, width=40)
+        self.barcode_entry.pack(pady=5)
+        self.barcode_entry.insert(0, "01000000049721025000186840")
+        
+        ttk.Label(self.root, text="Код и наименование продукта:").pack(pady=5)
+        self.product_entry = ttk.Entry(self.root, width=40)
+        self.product_entry.pack(pady=5)
+        self.product_entry.insert(0, 'Виски "William Lawson\'s ", 0,5 л., 40%')
+        
+        ttk.Label(self.root, text="Количество коробов:").pack(pady=5)
+        self.quantity_entry = ttk.Entry(self.root, width=40)
+        self.quantity_entry.pack(pady=5)
+        self.quantity_entry.insert(0, "65")
+        
+        ttk.Label(self.root, text="Дата закрытия паллеты:").pack(pady=5)
+        self.date_entry = ttk.Entry(self.root, width=40)
+        self.date_entry.pack(pady=5)
+        self.date_entry.insert(0, "25.09.2025")
+        
+        ttk.Label(self.root, text="Срок годности:").pack(pady=5)
+        self.expiry_entry = ttk.Entry(self.root, width=40)
+        self.expiry_entry.pack(pady=5)
+        self.expiry_entry.insert(0, "не ограничен")
+        
+        # Фрейм для кнопок
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(pady=20)
+        
+        # Кнопки
+        ttk.Button(button_frame, text="Создать из шаблона", 
+                  command=self.create_from_template).pack(pady=5, fill='x')
+        
+        ttk.Button(button_frame, text="Сохранить как...", 
+                  command=self.save_document).pack(pady=5, fill='x')
+        
+        ttk.Button(button_frame, text="Открыть для печати", 
+                  command=self.open_for_print).pack(pady=5, fill='x')
+        
+        ttk.Button(button_frame, text="Выбрать шаблон...", 
+                  command=self.select_template).pack(pady=5, fill='x')
+        
+        # Кнопка для отладки - посмотреть содержимое шаблона
+        ttk.Button(button_frame, text="Отладка: Показать текст шаблона", 
+                  command=self.debug_show_template_text).pack(pady=5, fill='x')
+    
+    def select_template(self):
+        """Выбор файла шаблона"""
+        filename = filedialog.askopenfilename(
+            title="Выберите файл шаблона",
+            filetypes=[
+                ("Word documents", "*.docx"),
+                ("All files", "*.*")
+            ]
+        )
+        if filename:
+            self.template_path = filename
+            messagebox.showinfo("Шаблон выбран", f"Шаблон установлен: {os.path.basename(filename)}")
+    
+    def debug_show_template_text(self):
+        """Показать весь текст шаблона для отладки"""
+        try:
+            if not os.path.exists(self.template_path):
+                messagebox.showerror("Ошибка", "Шаблон не выбран или не существует")
+                return
+            
+            doc = Document(self.template_path)
+            all_text = []
+            
+            for i, paragraph in enumerate(doc.paragraphs):
+                if paragraph.text.strip():
+                    all_text.append(f"Параграф {i}: {paragraph.text}")
+            
+            for t, table in enumerate(doc.tables):
+                for r, row in enumerate(table.rows):
+                    for c, cell in enumerate(row.cells):
+                        if cell.text.strip():
+                            all_text.append(f"Таблица {t}, Ячейка {r}-{c}: {cell.text}")
+            
+            debug_text = "\n".join(all_text)
+            messagebox.showinfo("Текст шаблона", f"Содержимое шаблона:\n\n{debug_text}")
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при чтении шаблона: {str(e)}")
+    
+    def generate_barcode(self, code):
+        """Генерация штрих-кода"""
+        temp_dir = tempfile.gettempdir()
+        barcode_path = os.path.join(temp_dir, 'temp_barcode')
+        
+        writer = ImageWriter()
+        writer.options = {
+            'module_width': 0.2,
+            'module_height': 15.0,
+            'quiet_zone': 6.5,
+            'font_size': 10,
+            'text_distance': 5.0
+        }
+        
+        barcode = Code128(code, writer=writer)
+        filename = barcode.save(barcode_path)
+        return filename
+    
+    def find_and_replace(self, doc, old_text, new_text):
+        """Улучшенный поиск и замена текста в документе"""
+        replaced = False
+        
+        # Ищем в параграфах
+        for paragraph in doc.paragraphs:
+            if old_text in paragraph.text:
+                # Сохраняем форматирование первого run
+                if paragraph.runs:
+                    # Заменяем в первом run
+                    if old_text in paragraph.runs[0].text:
+                        paragraph.runs[0].text = paragraph.runs[0].text.replace(old_text, new_text)
+                        replaced = True
+                else:
+                    # Если нет runs, создаем новый
+                    paragraph.text = paragraph.text.replace(old_text, new_text)
+                    replaced = True
+        
+        # Ищем в таблицах
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if old_text in cell.text:
+                        for paragraph in cell.paragraphs:
+                            if old_text in paragraph.text:
+                                if paragraph.runs:
+                                    paragraph.runs[0].text = paragraph.runs[0].text.replace(old_text, new_text)
+                                else:
+                                    paragraph.text = paragraph.text.replace(old_text, new_text)
+                                replaced = True
+        
+        return replaced
+    
+    def replace_barcode_image(self, doc, new_barcode_path):
+        """Замена изображения штрих-кода"""
+        try:
+            # Удаляем все существующие изображения и добавляем новое
+            for shape in doc.inline_shapes:
+                doc.delete_paragraph(shape.anchor.paragraph)
+            
+            # Добавляем новый штрих-код в начало документа
+            first_paragraph = doc.paragraphs[0] if doc.paragraphs else doc.add_paragraph()
+            run = first_paragraph.add_run()
+            run.add_picture(new_barcode_path, width=Inches(2.0))
+            
+        except Exception as e:
+            print(f"Ошибка при замене изображения: {e}")
+    
+    def create_from_template(self):
+        """Создание документа из шаблона"""
+        try:
+            if not os.path.exists(self.template_path):
+                messagebox.showerror("Ошибка", 
+                                   f"Файл шаблона не найден:\n{self.template_path}\n\nИспользуйте кнопку 'Выбрать шаблон...'")
+                return
+            
+            # Создаем копию шаблона
+            temp_dir = tempfile.gettempdir()
+            temp_doc_path = os.path.join(temp_dir, "temp_pallet_label.docx")
+            shutil.copy2(self.template_path, temp_doc_path)
+            
+            # Открываем копию для редактирования
+            doc = Document(temp_doc_path)
+            
+            # Генерируем новый штрих-код
+            barcode_filename = self.generate_barcode(self.barcode_entry.get())
+            
+            # Заменяем данные в документе
+            replacements = {
+                "01000000049721025000186840": self.barcode_entry.get(),
+                'Виски "William Lawson\'s ", 0,5 л., 40%': self.product_entry.get(),
+                "65": self.quantity_entry.get(),
+                "25.09.2025": self.date_entry.get(),
+                "не ограничен": self.expiry_entry.get()
+            }
+            
+            replaced_count = 0
+            for old_text, new_text in replacements.items():
+                if self.find_and_replace(doc, old_text, new_text):
+                    replaced_count += 1
+                    print(f"Заменен: {old_text} -> {new_text}")
+                else:
+                    print(f"Не найден для замены: {old_text}")
+            
+            # Заменяем изображение штрих-кода
+            self.replace_barcode_image(doc, barcode_filename)
+            
+            # Сохраняем измененный документ
+            filename = f"паллетная_этикетка_{self.barcode_entry.get()}.docx"
+            doc.save(filename)
+            
+            # Удаляем временные файлы
+            if os.path.exists(barcode_filename):
+                os.remove(barcode_filename)
+            if os.path.exists(temp_doc_path):
+                os.remove(temp_doc_path)
+            
+            self.current_file = filename
+            
+            if replaced_count > 0:
+                messagebox.showinfo("Успех", 
+                                  f"Документ создан из шаблона!\n"
+                                  f"Заменено полей: {replaced_count}\n"
+                                  f"Сохранен как: {filename}")
+            else:
+                messagebox.showwarning("Внимание", 
+                                     "Документ создан, но данные не были заменены.\n"
+                                     "Используйте кнопку 'Отладка' чтобы посмотреть текст шаблона.")
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при создании документа: {str(e)}")
+    
+    def save_document(self):
+        """Сохранение документа с выбором пути"""
+        try:
+            if not hasattr(self, 'current_file'):
+                messagebox.showwarning("Предупреждение", "Сначала создайте документ")
+                return
+            
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".docx",
+                filetypes=[
+                    ("Word documents", "*.docx"),
+                    ("All files", "*.*")
+                ],
+                title="Сохранить документ как..."
+            )
+            
+            if filename:
+                shutil.copy2(self.current_file, filename)
+                self.current_file = filename
+                messagebox.showinfo("Успех", f"Документ сохранен как: {filename}")
+                
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении: {str(e)}")
+    
+    def open_for_print(self):
+        """Открытие документа для ручной печати"""
+        try:
+            if hasattr(self, 'current_file') and os.path.exists(self.current_file):
+                if os.name == 'nt':
+                    os.startfile(self.current_file)
+                elif os.name == 'posix':
+                    subprocess.run(['open', self.current_file] if os.name == 'posix' and os.uname().sysname == 'Darwin' else ['xdg-open', self.current_file])
+                
+                messagebox.showinfo("Открытие", 
+                                  "Документ открыт в программе по умолчанию.")
+            else:
+                messagebox.showwarning("Предупреждение", 
+                                     "Сначала создайте и сохраните документ")
+                
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при открытии файла: {str(e)}")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PalletLabelEditor(root)
+    root.mainloop()
